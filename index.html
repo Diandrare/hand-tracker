@@ -2,13 +2,13 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <title>Full 10-Finger Hand Skeleton Tracking</title>
+  <title>Multi Cyber Frame - 10 Jari Realtime</title>
   <style>
     body {
       margin: 0;
       background: #090a0f;
       color: #00f3ff;
-      font-family: sans-serif;
+      font-family: monospace;
       display: flex;
       justify-content: center;
       align-items: center;
@@ -51,13 +51,14 @@
   let handLandmarker = null;
   let lastVideoTime = -1;
 
-  // Struktur Koneksi Sendi MediaPipe Hand (21 Landmark/Tangan)
+  // Indeks ujung 5 jari: [Ibu Jari, Telunjuk, Jari Tengah, Jari Manis, Kelingking]
+  const FINGER_TIPS = [4, 8, 12, 16, 20];
+
+  // Garis koneksi sendi tulang tangan
   const HAND_CONNECTIONS = [
-    [0, 1], [1, 2], [2, 3], [3, 4],           // Ibu Jari
-    [0, 5], [5, 6], [6, 7], [7, 8],           // Telunjuk
-    [5, 9], [9, 10], [10, 11], [11, 12],      // Jari Tengah
-    [9, 13], [13, 14], [14, 15], [15, 16],    // Jari Manis
-    [13, 17], [0, 17], [17, 18], [18, 19], [19, 20] // Kelingking & Telapak
+    [0,1],[1,2],[2,3],[3,4], [0,5],[5,6],[6,7],[7,8],
+    [5,9],[9,10],[10,11],[11,12], [9,13],[13,14],[14,15],[15,16],
+    [13,17],[0,17],[17,18],[18,19],[19,20]
   ];
 
   async function initTracker() {
@@ -68,10 +69,10 @@
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
-        delegate: "GPU"
+        delegate: "GPU" // GPU Acceleration biar gak delay
       },
       runningMode: "VIDEO",
-      numHands: 2 // Lacak 2 tangan (10 Jari Penuh)
+      numHands: 2 // Deteksi 2 tangan (10 jari)
     });
 
     startCamera();
@@ -98,22 +99,28 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (results.landmarks && results.landmarks.length > 0) {
-        const framePoints = [];
+        
+        // 1. Gambar Skeleton Sendi 10 Jari
+        results.landmarks.forEach(landmarks => drawSkeleton(landmarks));
 
-        results.landmarks.forEach((landmarks) => {
-          // 1. Gambar Seluruh Tulang & Sendi 10 Jari
-          drawFullHandSkeleton(landmarks);
+        // 2. Jika 2 Tangan Terdeteksi, Gambar BANYAK Kotak Garis Putus-putus
+        if (results.landmarks.length === 2) {
+          const handA = results.landmarks[0];
+          const handB = results.landmarks[1];
 
-          // Ambil titik Telunjuk & Ibu Jari untuk Cyber Frame
-          framePoints.push({
-            index: { x: landmarks[8].x * canvas.width, y: landmarks[8].y * canvas.height },
-            thumb: { x: landmarks[4].x * canvas.width, y: landmarks[4].y * canvas.height }
-          });
-        });
+          // A. Multi-Box: Buat kotak terpisah untuk tiap pasang jari berurutan
+          // (Kotak Telunjuk-Jempol, Kotak Tengah-Manis, dll)
+          for (let i = 0; i < FINGER_TIPS.length - 1; i++) {
+            const idx1 = FINGER_TIPS[i];
+            const idx2 = FINGER_TIPS[i + 1];
 
-        // 2. Gambar Frame Transparan jika 2 tangan terdeteksi
-        if (framePoints.length === 2) {
-          drawCyberFrame(framePoints[0], framePoints[1]);
+            const p1 = getCoords(handA[idx1]);
+            const p2 = getCoords(handA[idx2]);
+            const p3 = getCoords(handB[idx2]);
+            const p4 = getCoords(handB[idx1]);
+
+            drawDashedBox(p1, p2, p3, p4, `NODE 0${i+1}`);
+          }
         }
       }
     }
@@ -121,54 +128,58 @@
     requestAnimationFrame(renderLoop);
   }
 
-  // Menggambar Seluruh Sendi & Tulang Jari
-  function drawFullHandSkeleton(landmarks) {
-    // A. Gambar Garis Tulang Jari
-    ctx.strokeStyle = "rgba(0, 243, 255, 0.7)";
-    ctx.lineWidth = 3;
+  function getCoords(pt) {
+    return { x: pt.x * canvas.width, y: pt.y * canvas.height };
+  }
 
+  // Fungsi Menggambar 1 Kotak Garis Putus-Putus
+  function drawDashedBox(p1, p2, p3, p4, label) {
+    ctx.save();
+    
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.lineTo(p3.x, p3.y);
+    ctx.lineTo(p4.x, p4.y);
+    ctx.closePath();
+
+    // Isian transparan
+    ctx.fillStyle = "rgba(0, 243, 255, 0.08)";
+    ctx.fill();
+
+    // Border Garis Putus-Putus
+    ctx.strokeStyle = "#00f3ff";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]); // Efek garis putus-putus
+    ctx.shadowColor = "#00f3ff";
+    ctx.shadowBlur = 8;
+    ctx.stroke();
+
+    // Teks Label kecil di tiap kotak
+    ctx.fillStyle = "#00f3ff";
+    ctx.font = "10px monospace";
+    ctx.fillText(label, p1.x + 5, p1.y - 5);
+
+    ctx.restore();
+  }
+
+  // Drawing Skeleton
+  function drawSkeleton(landmarks) {
+    ctx.strokeStyle = "rgba(0, 243, 255, 0.4)";
+    ctx.lineWidth = 2;
     HAND_CONNECTIONS.forEach(([i, j]) => {
-      const p1 = landmarks[i];
-      const p2 = landmarks[j];
       ctx.beginPath();
-      ctx.moveTo(p1.x * canvas.width, p1.y * canvas.height);
-      ctx.lineTo(p2.x * canvas.width, p2.y * canvas.height);
+      ctx.moveTo(landmarks[i].x * canvas.width, landmarks[i].y * canvas.height);
+      ctx.lineTo(landmarks[j].x * canvas.width, landmarks[j].y * canvas.height);
       ctx.stroke();
     });
 
-    // B. Gambar Titik Sendi (21 Titik)
-    landmarks.forEach((pt, index) => {
+    landmarks.forEach((pt, idx) => {
       ctx.beginPath();
-      ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 5, 0, 2 * Math.PI);
-      
-      // Ujung jari diberi warna beda biar mencolok
-      if ([4, 8, 12, 16, 20].includes(index)) {
-        ctx.fillStyle = "#ff0055"; // Merah Neon untuk Ujung Jari
-      } else {
-        ctx.fillStyle = "#00f3ff"; // Cyan Neon untuk Sendi
-      }
+      ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 3, 0, 2 * Math.PI);
+      ctx.fillStyle = FINGER_TIPS.includes(idx) ? "#ff0055" : "#00f3ff";
       ctx.fill();
     });
-  }
-
-  // Cyber Frame Antara Kedua Tangan
-  function drawCyberFrame(h1, h2) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(h1.index.x, h1.index.y);
-    ctx.lineTo(h1.thumb.x, h1.thumb.y);
-    ctx.lineTo(h2.thumb.x, h2.thumb.y);
-    ctx.lineTo(h2.index.x, h2.index.y);
-    ctx.closePath();
-
-    ctx.fillStyle = "rgba(0, 243, 255, 0.15)";
-    ctx.fill();
-
-    ctx.strokeStyle = "#00f3ff";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([6, 4]);
-    ctx.stroke();
-    ctx.restore();
   }
 
   initTracker();
