@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <title>Multi Cyber Frame - 10 Jari Realtime</title>
+  <title>Proximity Dynamic Cyber Frame - 10 Jari Realtime</title>
   <style>
     body {
       margin: 0;
@@ -51,15 +51,18 @@
   let handLandmarker = null;
   let lastVideoTime = -1;
 
-  // Indeks ujung 5 jari: [Ibu Jari, Telunjuk, Jari Tengah, Jari Manis, Kelingking]
+  // Ujung 5 jari: [Ibu Jari (4), Telunjuk (8), Jari Tengah (12), Jari Manis (16), Kelingking (20)]
   const FINGER_TIPS = [4, 8, 12, 16, 20];
 
   // Garis koneksi sendi tulang tangan
   const HAND_CONNECTIONS = [
     [0,1],[1,2],[2,3],[3,4], [0,5],[5,6],[6,7],[7,8],
-    [5,9],[9,10],[10,11],[11,12], [9,13],[13,14],[14,15],[15,16],
+    [5,9],[9,10],[10,11],[11,12], [9,13],[13,14],[15,16],[13,14],[14,15],
     [13,17],[0,17],[17,18],[18,19],[19,20]
   ];
+
+  // BATAS JARAK BERSENTUHAN/MENDEKAT (dalam piksel)
+  const TOUCH_THRESHOLD = 90; 
 
   async function initTracker() {
     const vision = await FilesetResolver.forVisionTasks(
@@ -69,10 +72,10 @@
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
-        delegate: "GPU" // GPU Acceleration biar gak delay
+        delegate: "GPU"
       },
       runningMode: "VIDEO",
-      numHands: 2 // Deteksi 2 tangan (10 jari)
+      numHands: 2
     });
 
     startCamera();
@@ -84,6 +87,11 @@
     });
     video.srcObject = stream;
     video.addEventListener("loadeddata", renderLoop);
+  }
+
+  // Hitung Jarak 2 Titik (Euclidean Distance)
+  function getDistance(p1, p2) {
+    return Math.hypot(p1.x - p2.x, p1.y - p2.y);
   }
 
   function renderLoop() {
@@ -103,13 +111,11 @@
         // 1. Gambar Skeleton Sendi 10 Jari
         results.landmarks.forEach(landmarks => drawSkeleton(landmarks));
 
-        // 2. Jika 2 Tangan Terdeteksi, Gambar BANYAK Kotak Garis Putus-putus
+        // 2. Jika 2 Tangan Terdeteksi, Cek Jari yang Bersentuhan/Mendekat
         if (results.landmarks.length === 2) {
           const handA = results.landmarks[0];
           const handB = results.landmarks[1];
 
-          // A. Multi-Box: Buat kotak terpisah untuk tiap pasang jari berurutan
-          // (Kotak Telunjuk-Jempol, Kotak Tengah-Manis, dll)
           for (let i = 0; i < FINGER_TIPS.length - 1; i++) {
             const idx1 = FINGER_TIPS[i];
             const idx2 = FINGER_TIPS[i + 1];
@@ -119,7 +125,14 @@
             const p3 = getCoords(handB[idx2]);
             const p4 = getCoords(handB[idx1]);
 
-            drawDashedBox(p1, p2, p3, p4, `NODE 0${i+1}`);
+            // Cek jarak antara pasangan jari kiri dan kanan
+            const distTop = getDistance(p1, p4);
+            const distBottom = getDistance(p2, p3);
+
+            // Kotak HANYA DIGAMBAR jika jari-jari tersebut saling mendekat/bersentuhan
+            if (distTop < TOUCH_THRESHOLD || distBottom < TOUCH_THRESHOLD) {
+              drawDashedBox(p1, p2, p3, p4, `FRAME 0${i+1}`);
+            }
           }
         }
       }
@@ -132,7 +145,7 @@
     return { x: pt.x * canvas.width, y: pt.y * canvas.height };
   }
 
-  // Fungsi Menggambar 1 Kotak Garis Putus-Putus
+  // Menggambar Kotak Garis Putus-Putus
   function drawDashedBox(p1, p2, p3, p4, label) {
     ctx.save();
     
@@ -143,29 +156,28 @@
     ctx.lineTo(p4.x, p4.y);
     ctx.closePath();
 
-    // Isian transparan
-    ctx.fillStyle = "rgba(0, 243, 255, 0.08)";
+    // Isian transparan saat terhubung
+    ctx.fillStyle = "rgba(0, 243, 255, 0.12)";
     ctx.fill();
 
-    // Border Garis Putus-Putus
+    // Border Garis Putus-Putus Glowing
     ctx.strokeStyle = "#00f3ff";
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([6, 4]); // Efek garis putus-putus
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 4]);
     ctx.shadowColor = "#00f3ff";
-    ctx.shadowBlur = 8;
+    ctx.shadowBlur = 10;
     ctx.stroke();
 
-    // Teks Label kecil di tiap kotak
+    // Teks Label
     ctx.fillStyle = "#00f3ff";
-    ctx.font = "10px monospace";
-    ctx.fillText(label, p1.x + 5, p1.y - 5);
+    ctx.font = "11px monospace";
+    ctx.fillText(`${label} // CONNECTED`, p1.x + 5, p1.y - 8);
 
     ctx.restore();
   }
 
-  // Drawing Skeleton
   function drawSkeleton(landmarks) {
-    ctx.strokeStyle = "rgba(0, 243, 255, 0.4)";
+    ctx.strokeStyle = "rgba(0, 243, 255, 0.35)";
     ctx.lineWidth = 2;
     HAND_CONNECTIONS.forEach(([i, j]) => {
       ctx.beginPath();
@@ -176,7 +188,7 @@
 
     landmarks.forEach((pt, idx) => {
       ctx.beginPath();
-      ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 3, 0, 2 * Math.PI);
+      ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 4, 0, 2 * Math.PI);
       ctx.fillStyle = FINGER_TIPS.includes(idx) ? "#ff0055" : "#00f3ff";
       ctx.fill();
     });
