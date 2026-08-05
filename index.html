@@ -1,105 +1,188 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web Hand Tracker</title>
-    <!-- Load MediaPipe Hands dan Camera Utils dari CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-    
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-            background-color: #111;
-            color: white;
-            font-family: Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-        }
-        h2 {
-            margin-bottom: 10px;
-        }
-        .container {
-            position: relative;
-            width: 640px;
-            height: 480px;
-            border-radius: 10px;
-            overflow: hidden;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-        }
-        video, canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            transform: scaleX(-1); /* Efek cermin (mirror) */
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cyber Frame Hand Tracking - Realtime 10 Jari</title>
+  <style>
+    body {
+      margin: 0;
+      background: #090a0f;
+      color: #00f3ff;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .viewport {
+      position: relative;
+      width: 1280px;
+      height: 720px;
+      border: 1px solid rgba(0, 243, 255, 0.3);
+      box-shadow: 0 0 30px rgba(0, 243, 255, 0.15);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    video, canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      /* Flip horizontal agar gerakan seperti cermin */
+      transform: scaleX(-1);
+    }
+    .hud-overlay {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(10, 15, 25, 0.85);
+      border: 1px solid #00f3ff;
+      padding: 12px 20px;
+      font-size: 12px;
+      letter-spacing: 1.5px;
+      pointer-events: none;
+      z-index: 10;
+    }
+  </style>
+  <!-- Import MediaPipe Tasks Vision -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm/vision_bundle.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
-    <h2>Web Hand Tracker (MediaPipe JS)</h2>
-    <div class="container">
-        <!-- Elemen Video tersembunyi untuk mengambil stream kamera -->
-        <video class="input_video" autoplay muted></video>
-        <!-- Canvas untuk menggambar kerangka tangan -->
-        <canvas class="output_canvas" width="640" height="480"></canvas>
-    </div>
+<div class="viewport">
+  <video id="webcam" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
+  
+  <div class="hud-overlay">
+    <div>CAMERA NODE // 01</div>
+    <div style="font-size: 16px; font-weight: bold; margin-top: 4px;">10-FINGER TRACKING</div>
+    <div id="status" style="color: #00f3ff; margin-top: 4px;">INITIALIZING...</div>
+  </div>
+</div>
 
-    <script>
-        const videoElement = document.getElementsByClassName('input_video')[0];
-        const canvasElement = document.getElementsByClassName('output_canvas')[0];
-        const canvasCtx = canvasElement.getContext('2d');
+<script type="module">
+  import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
 
-        function onResults(results) {
-            canvasCtx.save();
-            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-            
-            // Gambar gambar video ke canvas
-            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+  const video = document.getElementById("webcam");
+  const canvas = document.getElementById("canvas");
+  const ctx = canvas.getContext("2d");
+  const statusEl = document.getElementById("status");
 
-            // Jika tangan terdeteksi, gambar kerangka jarinya
-            if (results.multiHandLandmarks) {
-                for (const landmarks of results.multiHandLandmarks) {
-                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-                    drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 3});
-                }
-            }
-            canvasCtx.restore();
+  let handLandmarker = null;
+  let lastVideoTime = -1;
+
+  // Inisialisasi Model Hand Landmarker
+  async function initTracker() {
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+    );
+    
+    handLandmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+        delegate: "GPU" // Akselerasi Hardware GPU biar tidak delay
+      },
+      runningMode: "VIDEO",
+      numHands: 2, // Lacak sampai 2 tangan / 10 jari
+      minHandDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    statusEl.innerText = "SYSTEM ACTIVE";
+    startCamera();
+  }
+
+  // Buka Kamera Device
+  async function startCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 1280, height: 720, frameRate: { ideal: 60 } }
+      });
+      video.srcObject = stream;
+      video.addEventListener("loadeddata", renderLoop);
+    } catch (err) {
+      statusEl.innerText = "CAMERA ERROR";
+      console.error(err);
+    }
+  }
+
+  // Render Loop Realtime
+  function renderLoop() {
+    if (canvas.width !== video.videoWidth) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+    }
+
+    if (handLandmarker && video.currentTime !== lastVideoTime) {
+      lastVideoTime = video.currentTime;
+      const results = handLandmarker.detectForVideo(video, performance.now());
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (results.landmarks && results.landmarks.length > 0) {
+        const framePoints = [];
+
+        results.landmarks.forEach((landmarks) => {
+          // Gambar titik 10 Jari
+          drawLandmarks(landmarks);
+
+          // Simpan koordinat Telunjuk (index 8) & Ibu Jari (index 4) tiap tangan
+          framePoints.push({
+            index: { x: landmarks[8].x * canvas.width, y: landmarks[8].y * canvas.height },
+            thumb: { x: landmarks[4].x * canvas.width, y: landmarks[4].y * canvas.height }
+          });
+        });
+
+        // Buat efek 'Cyber Frame' jika kedua tangan terdeteksi
+        if (framePoints.length === 2) {
+          drawCyberFrame(framePoints[0], framePoints[1]);
         }
+      }
+    }
 
-        const hands = new Hands({
-            locateFile: (file) => {
-                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-            }
-        });
+    requestAnimationFrame(renderLoop);
+  }
 
-        hands.setOptions({
-            maxNumHands: 2,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
+  // Visualisasi Point / Sendi Jari
+  function drawLandmarks(landmarks) {
+    ctx.fillStyle = "#00f3ff";
+    landmarks.forEach((pt) => {
+      ctx.beginPath();
+      ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 4, 0, 2 * Math.PI);
+      ctx.fill();
+    });
+  }
 
-        hands.onResults(onResults);
+  // Efek Kotak Transparan ala Cyberpunk di Antara 2 Tangan
+  function drawCyberFrame(h1, h2) {
+    ctx.save();
+    
+    ctx.beginPath();
+    ctx.moveTo(h1.index.x, h1.index.y);
+    ctx.lineTo(h1.thumb.x, h1.thumb.y);
+    ctx.lineTo(h2.thumb.x, h2.thumb.y);
+    ctx.lineTo(h2.index.x, h2.index.y);
+    ctx.closePath();
 
-        const camera = new Camera(videoElement, {
-            onFrame: async () => {
-                await hands.send({image: videoElement});
-            },
-            width: 640,
-            height: 480
-        });
+    // Isian Hologram Transparan
+    ctx.fillStyle = "rgba(0, 243, 255, 0.18)";
+    ctx.fill();
 
-        camera.start();
-    </script>
+    // Line Outer Border Glowing
+    ctx.strokeStyle = "#00f3ff";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 4]); // Garis putus-putus ala UI Cyber
+    ctx.shadowColor = "#00f3ff";
+    ctx.shadowBlur = 10;
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  initTracker();
+</script>
 </body>
 </html>
